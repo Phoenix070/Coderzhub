@@ -1,0 +1,109 @@
+from django.shortcuts import render, get_object_or_404
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, login
+from django.http import HttpResponseRedirect
+
+from hubusers.models import *
+from hubusers.forms import *
+from projects.models import Project
+
+
+import urllib2
+import json 
+import requests
+
+def FrontPage(request):
+    return render(request, 'front_page.html')
+
+def LoginUser(request):
+    error = False
+    if request.method == 'POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+        user = authenticate(username=username,
+                            password=password)
+        if user is not None:
+            if user.is_active:
+                login(request, user)
+                return HttpResponseRedirect("/users/%s" % user.id)
+        error = True
+    return render(request, 'login.html',  {'error': error,})
+
+
+def RegisterUser(request):
+    if request.method == 'POST':
+        mainuser_form = MainUserForm(request.POST)
+        hubuser_form = HubUserForm(request.POST)
+
+        if mainuser_form.is_valid() and hubuser_form.is_valid():
+            user_cd = mainuser_form.cleaned_data
+            new_user = User.objects.create_user(username=user_cd['username'],
+                                                password=user_cd['password'],
+                                                first_name=user_cd['first_name'],
+                                                last_name=user_cd['last_name'])
+            new_hubuser = hubuser_form.save(commit=False)
+            new_hubuser.user = new_user
+            new_hubuser.save()
+            user = authenticate(username=user_cd['username'],
+                                password=user_cd['password'])
+            if user is not None:
+                if user.is_active:
+                    login(request, user)
+                    return HttpResponseRedirect("/users/%s"
+                                                % new_user.username)
+    else:
+        mainuser_form = MainUserForm()
+        hubuser_form = HubUserForm()
+    return render(request, 'register.html', {'mainuser_form': mainuser_form,
+                                             'hubuser_form': hubuser_form})
+
+
+def user_page(request, user_id):
+    user_name = HubUser.objects.get(user__id=user_id)
+    github_request = urllib2.urlopen('https://api.github.com/users/%s'
+                                     % (user_name.github))
+    json_data = json.loads(github_request.read())
+    github_login = json_data['login']
+    github_email = json_data['email']
+
+    return render(request, 'user_page.html', {'user_name': user_name.user,
+                                              'github_username': github_login,
+                                              'github_email': github_email})
+
+
+def user_page_username(request, username):
+    user_name = HubUser.objects.get(user__username__iexact=username)
+    github_request = urllib2.urlopen('https://api.github.com/users/%s'
+                                     % (user_name.github))
+    json_data = json.loads(github_request.read())
+    github_login = json_data['login']
+    if 'email' in json_data:
+        github_email = json_data['email']
+    else:
+        github_email = ''
+        
+    return render(request, 'user_page.html', {'user_name': user_name.user,
+                                              'github_username': github_login,
+                                              'github_email': github_email})
+
+
+def user_repo_list(request, username):
+    user = HubUser.objects.get(user__username__iexact=username)
+    repo_list = Project.objects.filter(owners=user)
+    
+    return render(request, 'repo_list.html', {'user_name': user.user,
+                                              'repo_list': repo_list})
+
+
+def repo_view(request, username, repo):
+    project_details= Project.objects.get(name=repo)
+    github_request = urllib2.urlopen('https://api.github.com/repos/%s/%s' % (username,repo))
+    json_data= json.loads(github_request.read())
+    
+    return render(request, 'repo_view.html', {'owner': json_data['owner'],
+                                              'name': json_data['name'],
+                                              'description': json_data['description'],
+                                              'url': json_data['url'],
+                                              'created_at': json_data['created_at'],
+                                              'updated_at': json_data['updated_at']
+                                              })
